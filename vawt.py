@@ -14,7 +14,7 @@ from scipy.interpolate import UnivariateSpline, RectBivariateSpline
 import numpy as np
 
 from _ac import actuatorcylinder as _ac
-import _vbemroutines
+import _vbem
 
 
 class NACA0015_linear:
@@ -249,13 +249,13 @@ class VAWT:
         if (r < 1e-6):
             return 0.0, 0.0, 0.0
 
-        alpha, Re, phi, W = _vbemroutines.velocity(a, r, chord, twist, theta, delta,
+        alpha, Re, phi, W = _vbem.velocity(a, r, chord, twist, theta, delta,
                                                    Uinf, Omega, self.rho, self.mu)
 
         # airfoil lift and drag
         cl, cd = af.evaluate(alpha, Re)
 
-        residual, Np, Tp, Zp = _vbemroutines.vbem(a, r, chord, theta, delta,
+        residual, Np, Tp, Zp = _vbem.vbem(a, r, chord, theta, delta,
                                                   cl, cd, phi, W, Uinf, self.rho, self.B)
 
         return residual, Np, Tp, Zp
@@ -417,6 +417,9 @@ class VAWT:
 
 
 if __name__ == '__main__':
+
+    # generate_ac_matrix()
+    # exit()
 
 
     # from wisdem.rotor.ccblade import CCAirfoil
