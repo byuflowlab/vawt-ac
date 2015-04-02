@@ -97,7 +97,7 @@ def generate_ac_matrix(ntheta=36):
 class VAWT:
     """docstring for VAWT"""
 
-    def __init__(self, z, r, chord, twist, dtheta, af, zbase, zref, shear, B=3, rho=1.225,
+    def __init__(self, z, r, chord, twist, dtheta, af, zref, shear, B=3, rho=1.225,
                  mu=1.7894e-5, method='ac'):
 
         self.z = z
@@ -107,7 +107,6 @@ class VAWT:
         self.dtheta = dtheta
         self.af = af
 
-        self.zbase = zbase
         self.zref = zref
         self.shear = shear
 
@@ -197,8 +196,9 @@ class VAWT:
         for i in range(nz):
 
             # account for shear
-            zturbine = self.z - self.z[0]
-            V = Uinf*((zturbine[i] + self.zbase)/(self.zref + self.zbase))**self.shear
+            # zturbine = self.z - self.z[0]
+            # V = Uinf*((zturbine[i] + self.zbase)/(self.zref + self.zbase))**self.shear
+            V = Uinf*(self.z[i]/self.zref)**self.shear
 
             args = (self.r[i], self.chord[i], self.twist[i], self.af[i], self.B,
                     self.delta[i], V, Omega, self.rho, self.mu)
@@ -250,13 +250,13 @@ class VAWT:
             return 0.0, 0.0, 0.0
 
         alpha, Re, phi, W = _vbem.velocity(a, r, chord, twist, theta, delta,
-                                                   Uinf, Omega, self.rho, self.mu)
+                                           Uinf, Omega, self.rho, self.mu)
 
         # airfoil lift and drag
         cl, cd = af.evaluate(alpha, Re)
 
         residual, Np, Tp, Zp = _vbem.vbem(a, r, chord, theta, delta,
-                                                  cl, cd, phi, W, Uinf, self.rho, self.B)
+                                          cl, cd, phi, W, Uinf, self.rho, self.B)
 
         return residual, Np, Tp, Zp
 
@@ -286,8 +286,9 @@ class VAWT:
             afirst = np.zeros(nt)
 
             # account for shear
-            zturbine = self.z - self.z[0]
-            Vshear = Uinf*((zturbine[i] + self.zbase)/(self.zref + self.zbase))**self.shear
+            # zturbine = self.z - self.z[0]
+            # Vshear = Uinf*((zturbine[i] + self.zbase)/(self.zref + self.zbase))**self.shear
+            Vshear = Uinf*(self.z[i]/self.zref)**self.shear
 
             # loop across theta
             for j in range(nt):
@@ -422,34 +423,52 @@ if __name__ == '__main__':
     # exit()
 
 
-    # from wisdem.rotor.ccblade import CCAirfoil
+    from ccblade import CCAirfoil
 
-    D = 5.0
-    H = 1.02*D
-    B = 3
-    chord0 = 0.1524
+    # D = 5.0
+    # H = 1.02*D
+    # B = 3
+    # chord0 = 0.1524
 
-    hh = H/2
-    R = D/2
-    r0 = 0.0*R
-    z = np.linspace(-hh, hh, 10)
-    r = r0 + (R-r0) * (1 - (z/hh)**2)
-    chord = chord0 * np.ones_like(r)
+    # hh = H/2
+    # R = D/2
+    # r0 = 0.0*R
+    # z = np.linspace(-hh, hh, 10)
+    # r = r0 + (R-r0) * (1 - (z/hh)**2)
+    # chord = chord0 * np.ones_like(r)
+    # twist = np.zeros_like(r)
+    # dtheta = np.zeros_like(z)
+    # # af = [NACA0015_linear()]*len(r)
+    # af = [CCAirfoil.initFromAerodynFile('airfoils/NACA_0015_extrap.dat')]*len(r)
+
+    # rho = 0.82*1.225
+    # # zbase = H/2.0
+    # zref = H
+    # shear = 0.2
+
+    H = 5.0
+    hubHt = 6.0
+    D = 6.0
+
+    z = np.linspace(hubHt-H/2.0, hubHt+H/2.0, 10)
+    r = D/2.0*np.ones_like(z)
+    chord = 0.25*np.ones_like(z)
+    chord[z > hubHt+H/2.0-1] = np.linspace(0.25, 0.6*0.25, len(chord[z > hubHt+H/2.0-1]))
+    chord[z < hubHt-H/2.0+1] = np.linspace(0.6*0.25, 0.25, len(chord[z < hubHt-H/2.0+1]))
     twist = np.zeros_like(r)
-    dtheta = np.zeros_like(z)
-    af = [NACA0015_linear()]*len(r)
-    # af = [CCAirfoil.initFromAerodynFile('NACA_0015_extrap.dat')]*len(r)
-
-    rho = 0.82*1.225
-    zbase = H/2
-    zref = H
-    shear = 0.2
-
-
+    dtheta = np.zeros_like(r)
+    # zbase = hubHt-H/2.0
+    # zref = 4.64
+    zref = hubHt
+    shear = 0.185
+    B = 3
+    rho = 1.225
+    af = [CCAirfoil.initFromAerodynFile('airfoils/NACA_0021.dat')]*len(r)
 
 
-    vawt_ac = VAWT(z, r, chord, twist, dtheta, af, zbase, zref, shear, B, rho, method='ac')
-    vawt_dmst = VAWT(z, r, chord, twist, dtheta, af, zbase, zref, shear, B, rho, method='dmst')
+    vawt_ac = VAWT(z, r, chord, twist, dtheta, af, zref, shear, B, rho, method='ac')
+
+    # vawt_dmst = VAWT(z, r, chord, twist, dtheta, af, zref, shear, B, rho, method='dmst')
 
 
     tsr = np.linspace(1, 8, 20)
@@ -462,20 +481,19 @@ if __name__ == '__main__':
     Kpdmst = np.zeros(ntsr)
 
 
+    R = D/2.0
     for i in range(ntsr):
-        Omega = 150.0*pi/30.0  # rad/s
+        Omega = 127.0*pi/30.0  # rad/s
         Uinf = Omega*R/tsr[i]
 
         theta, CP[i], CcR, CcT, CX, CY, CZ, Sref = vawt_ac.evaluate(Uinf, Omega)
         CT[i] = 1/(2*pi)*np.trapz(CX, theta)
         Kp[i] = CP[i]*Uinf**3/(Omega*R)**3
+        CP[i] *= Sref/(D*H)
 
-        # CP[i] *= Sref/(D*H)
-
-        theta, CPdmst[i], CcR, CcT, CX, CY, CZ, Sref = vawt_dmst.evaluate(Uinf, Omega)
-        CTdmst[i] = 1/(2*pi)*np.trapz(CX, theta)
-        Kpdmst[i] = CPdmst[i]*Uinf**3/(Omega*R)**3
-
+        # theta, CPdmst[i], CcR, CcT, CX, CY, CZ, Sref = vawt_dmst.evaluate(Uinf, Omega)
+        # CTdmst[i] = 1/(2*pi)*np.trapz(CX, theta)
+        # Kpdmst[i] = CPdmst[i]*Uinf**3/(Omega*R)**3
         # CPdmst[i] *= Sref/(D*H)
 
 
@@ -483,14 +501,25 @@ if __name__ == '__main__':
 
     import matplotlib.pyplot as plt
     plt.plot(tsr, CP, '-ko')
-    plt.plot(tsr, CPdmst, '-ro')
+    # plt.plot(tsr, CPdmst, '--ko')
     plt.xlabel('$\\lambda$')
     plt.ylim([0, 0.6])
     plt.grid()
 
-    plt.figure()
-    plt.plot(tsr, CT, '-ko')
-    plt.plot(tsr, CTdmst, '-ro')
+    tsr_cactus = np.arange(1, 7.1, 0.5)
+    CP_cactus = [0.029, 0.0708, 0.173, 0.342, 0.468, 0.515, 0.497, 0.456, 0.416, 0.356, 0.227, 0.136, -0.0591]
+    tsr_cfd = np.arange(1, 8.1, 0.5)
+    CP_cfd = [0.026824836, 0.063673186, 0.150848839, 0.352186123, 0.43131109, 0.439449322, 0.414917889, 0.366730595, 0.29907876, 0.214189208, 0.108863413, -0.018983, -0.16725131, -0.340271956, -0.523360716]
+    plt.plot(tsr_cactus, CP_cactus, '-ro')
+    plt.plot(tsr_cfd, CP_cfd, '-bo')
+    # for i in range(len(tsr)):
+    #     print tsr[i]
+    for i in range(len(tsr)):
+        print CP[i]
+
+    # plt.figure()
+    # plt.plot(tsr, CT, '-ko')
+    # plt.plot(tsr, CTdmst, '-ro')
 
 
     plt.show()
