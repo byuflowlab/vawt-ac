@@ -88,7 +88,7 @@ module actuatorcylinder
 
             else
                 a = 0.5*(1 - sqrt(1 - CThrust))
-                ka = 1 / (1-a)
+                ka = 1.0 / (1-a)
             end if
 
         else
