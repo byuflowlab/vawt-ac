@@ -1,11 +1,18 @@
-module AirfoilRead
+# module AirfoilRead
 
-export AirfoilData, readaerodyn
+# export AirfoilData, readaerodyn
+
+import Interpolations: interpolate, Gridded, Linear, GriddedInterpolation
+
+# type AirfoilData
+#     alpha::Array{Float64,1}
+#     cl::Array{Float64,1}
+#     cd::Array{Float64,1}
+# end
 
 type AirfoilData
-    alpha::Array{Float64,1}
-    cl::Array{Float64,1}
-    cd::Array{Float64,1}
+    cl::GriddedInterpolation
+    cd::GriddedInterpolation
 end
 
 function readaerodyn(filename)
@@ -35,12 +42,18 @@ function readaerodyn(filename)
         end
     end
 
-    af = AirfoilData(alpha*pi/180.0, cl, cd)
+    # af = AirfoilData(alpha*pi/180.0, cl, cd)
+
+    # 1D interpolations for now.  ignoring Re dependence (which is very minor)
+    afcl = interpolate((alpha*pi/180.0,), cl, Gridded(Linear()))
+    afcd = interpolate((alpha*pi/180.0,), cd, Gridded(Linear()))
+    af = AirfoilData(afcl, afcd)
 
     return af
 end
 
-end
+# end
+
 # filename = "airfoils/NACA_0012_mod.dat"
 # alpha, cl, cd = readaerodyn(filename)
 # using PyPlot
