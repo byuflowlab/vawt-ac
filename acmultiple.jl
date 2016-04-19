@@ -1,6 +1,6 @@
 include("airfoilread.jl")  # my airfoil file reader
-using PyCall
-@pyimport scipy.optimize as so
+push!(LOAD_PATH, "minpack")
+using Root
 
 
 # --- Influence Coefficients ---
@@ -67,12 +67,12 @@ end
 function WxIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Float64,1})
 
     # initialize
+    nx = length(xvec)
     ntheta = length(thetavec)
     dtheta = thetavec[2] - thetavec[1]  # assumes equally spaced
-    Wx = zeros(ntheta, ntheta)
+    Wx = zeros(nx, ntheta)
 
-    for i in eachindex(thetavec)
-        # if yvec[i] >= -1 && yvec[i] <= 1 && xvec[i] >= 1
+    for i in eachindex(xvec)
         if yvec[i] >= -1.0 && yvec[i] <= 1.0 && xvec[i] >= 0.0 && xvec[i]^2 + yvec[i]^2 >= 1.0
             thetak = acos(yvec[i])
             k = findfirst(thetavec + dtheta/2 .> thetak)  # index of intersection
@@ -243,8 +243,6 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     rotation = turbine.ccwrotation ? 1.0 : -1.0
 
     # velocity components and angles
-    # Vn = Vinf*(1 + uvec).*sin(thetavec) - Vinf*vvec.*cos(thetavec)
-    # Vt = Vinf*(1 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec) + Omega*r
     Vn = Vinf*(1.0 + uvec).*sin(thetavec) - Vinf*vvec.*cos(thetavec)
     Vt = rotation*(Vinf*(1.0 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec)) + Omega*r
     W = sqrt(Vn.^2 + Vt.^2)
@@ -271,7 +269,6 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     Zp = -cn.*qdyn*chord*tan(delta)
 
     # nonlinear correction factor
-    # integrand = (W/Vinf).^2 .* (cn.*sin(thetavec) - ct.*cos(thetavec)/cos(delta))
     integrand = (W/Vinf).^2 .* (cn.*sin(thetavec) - rotation*ct.*cos(thetavec)/cos(delta))
     CT = sigma/(4*pi) * pInt(thetavec, integrand)
     if CT > 2.0
@@ -290,14 +287,14 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     p = ka*q
 
     # power coefficient
-    H = 1.0  # per unit depth
+    H = 1.0  # per unit height
     Sref = 2*r*H
     Q = r*Tp
     # println(Q)
     P = Omega*B/(2*pi)*pInt(thetavec, Q)
     CP = P / (0.5*rho*Vinf^3 * Sref)
 
-    return p, CT, CP, Rp, Tp, Zp
+    return p, CT, CP, Rp, Tp, Zp, Q
 end
 
 # -----------------------------------------
@@ -307,7 +304,7 @@ end
 # ------ Solve System --------------
 
 function residual(w::Array{Float64,1}, A::Array{Float64,2}, theta::Array{Float64,1},
-    turbines::Array{Any,1}, env::Environment)  # turbines of type Any rather than Turbine because Python doesn't know right type with callback
+    turbines::Array{Turbine,1}, env::Environment)
 
     # setup
     ntheta = length(theta)
@@ -315,7 +312,7 @@ function residual(w::Array{Float64,1}, A::Array{Float64,2}, theta::Array{Float64
     p = zeros(ntheta*nturbines)
 
     for i in eachindex(turbines)
-        idx = collect((i-1)*ntheta+1:i*ntheta)
+        idx = (i-1)*ntheta+1:i*ntheta
 
         u = w[idx]
         v = w[ntheta*nturbines + idx]
@@ -337,15 +334,16 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
     A = [Ax; Ay]
 
     # ND root solve
+    ntheta = length(theta)
     nturbines = length(turbines)
     w0 = zeros(nturbines*ntheta*2)
     args = (A, theta, turbines, env)
     tol = 1e-6
-    sol = so.root(residual, w0, args, tol=tol)
-    w::Array{Float64,1} = sol["x"]
 
-    if !sol["success"]
-        println("hybrd terminated prematurely. message = ", sol["message"])
+    w, zz, info = hybrd(residual, w0, args, tol)
+
+    if info != 1
+        println("hybrd terminated prematurely. info = ", info)
     end
 
     # evaluate loads at solution point
@@ -354,17 +352,18 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
     Rp = zeros(ntheta, nturbines)
     Tp = zeros(ntheta, nturbines)
     Zp = zeros(ntheta, nturbines)
+    Q = zeros(ntheta, nturbines)
 
     for i in eachindex(turbines)
-        idx = collect((i-1)*ntheta+1:i*ntheta)
+        idx = (i-1)*ntheta+1:i*ntheta
 
         u = w[idx]
         v = w[ntheta*nturbines + idx]
-        _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+        _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i], Q[:, i] = radialforce(u, v, theta, turbines[i], env)
 
     end
 
-    return CT, CP, Rp, Tp, Zp
+    return CT, CP, Rp, Tp, Zp, Q, theta
 end
 
 # -----------------------------------------
@@ -393,28 +392,56 @@ function pInt(theta::Array{Float64,1}, f::Array{Float64,1})
     return integral
 end
 
-# define fixed conditions geometry
+# # define fixed conditions geometry
+#
+# ntheta = 36
+#
+# r = 3.0
+# twist = 0.0
+# delta = 0.0
+# af = readaerodyn("airfoils/NACA_0012_mod.dat")
+# B = 3
+# solidity = 0.25
+# chord = solidity*r/B  # solidity = 0.25
+#
+# Vinf = 1.0
+# rho = 1.225
+# mu = 1.7894e-5
+#
+# ccw1 = true
+#
+# turbines = Array{Turbine}(1)
+# turbines[1] = Turbine(r, chord, twist, delta, B, af, ccw1, 0.0, 0.0)
+# #
+# tsr = 3.5
+# Omega = Vinf*tsr/r
+# env = Environment(Vinf, Omega, rho, mu)
+#
+# CT, CP, Rp, Tp, Zp = actuatorcylinder(turbines, env, ntheta)
+# println(CT, CP)
+# #
+#
+# function mytest(n)
+#     for i = 1:n
+#         CT, CP, Rp, Tp, Zp = actuatorcylinder(turbines, env, ntheta)
+#         println(CT, CP)
+#     end
+# end
+#
+# mytest(1)
+# #
+# @time mytest(20)
+# nothing
 
-ntheta = 36
+# using ProfileView
+# Profile.clear()
+# @profile mytest(20)
+# # # Profile.print()
 
-r = 3.0
-twist = 0.0
-delta = 0.0
-af = readaerodyn("airfoils/NACA_0012_mod.dat")
-B = 3
-solidity = 0.25
-chord = solidity*r/B  # solidity = 0.25
-
-Vinf = 1.0
-rho = 1.225
-mu = 1.7894e-5
-
-ccw1 = true
-
-turbines = Array{Turbine}(1)
-turbines[1] = Turbine(r, chord, twist, delta, B, af, ccw1, 0.0, 0.0)
-
-
+# # nothing
+# ProfileView.view()
+# ProfileView.svgwrite("profile_results.svg")
+# show()
 
 # turbines[2] = Turbine(r, chord, twist, delta, B, af, ccw2, 0.0, 0.0)
 
@@ -502,14 +529,7 @@ turbines[1] = Turbine(r, chord, twist, delta, B, af, ccw1, 0.0, 0.0)
 # # using ProfileView
 # # ProfileView.view()
 
-# function mytest(n)
-#     for i = 1:n
-#         CT0, CP0, Rp, Tp, Zp = actuatorcylinder(turbines, env, ntheta)
-#         # println(CT0, CP0)
-#     end
-# end
 
-# @time mytest(20)
 
 
 # [0.7071796277049306][0.421509550862392]

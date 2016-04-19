@@ -1,7 +1,8 @@
 module Root
 export hybrd
 
-function residual_wrapper(nw::Ptr{Cint}, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, iflag::Ptr{Cint})
+# function residual_wrapper(nw::Ref{Cint}, xw::Ref{Cdouble}, fw::Ref{Cdouble}, iflag::Ref{Cint})
+function residual_wrapper(nw::Int32, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, iflag::Int32)
     """
     Callback function from hybrd.  Unpacks the Fortran pointers, calls a
     residual function written in Julia, then stores results in another Fortran
@@ -9,11 +10,11 @@ function residual_wrapper(nw::Ptr{Cint}, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, ifl
     """
 
     # initialize
-    nvec = unsafe_load(nw)  # length of arrays
-    xvec = zeros(nvec)  # initialize copy
+    # nvec = unsafe_load(nw)  # length of arrays
+    xvec = zeros(nw)  # initialize copy
 
     # copy x values into Julia
-    for i = 1:nvec
+    for i = 1:nw
         xvec[i] = unsafe_load(xw, i)
     end
 
@@ -23,7 +24,7 @@ function residual_wrapper(nw::Ptr{Cint}, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, ifl
     fvec = res(xvec, res_args...)
 
     # copy f values into C pointer
-    for i = 1:nvec
+    for i = 1:nw
         unsafe_store!(fw, fvec[i], i)
     end
 
@@ -31,7 +32,7 @@ function residual_wrapper(nw::Ptr{Cint}, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, ifl
 end
 
 
-function hybrd(residual, x0, args, tol=1e-6)
+function hybrd(residual, x0::Array{Float64,1}, args, tol=1e-6)
     """
     Inputs
     ------
@@ -96,13 +97,13 @@ function hybrd(residual, x0, args, tol=1e-6)
     global res_args = args
 
     # define the callback function
-    const res_func = cfunction(residual_wrapper, Void, (Ptr{Cint}, Ptr{Cdouble},
-        Ptr{Cdouble}, Ptr{Cint}))
+    const res_func = cfunction(residual_wrapper, Void, (Ref{Cint}, Ptr{Cdouble},
+        Ptr{Cdouble}, Ref{Cint}))
 
     # call hybrd.  must pass by reference for Fortran
     # compilation command I used (OS X with gfortran):
     # gfortran -shared -O2 *.f -o libhybrd.dylib -fPIC
-    ccall( (:hybrd1_, "libhybrd"), Void, (Ptr{Void}, Ptr{Cint}, Ptr{Cdouble},
+    ccall( (:hybrd1_, "minpack/libhybrd"), Void, (Ptr{Void}, Ptr{Cint}, Ptr{Cdouble},
         Ptr{Cdouble}, Ptr{Cdouble}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint}),
         res_func, &n, x, f, &tol, info_in, wa, &lwa)
     info = info_in[1]  # extract termination info

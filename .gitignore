@@ -114,3 +114,8 @@ Thumbs.db
 *.nlo
 *.nls
 *.fls
+
+# Julia
+*.dylib
+*.mem
+*.ipynb_checkpoints
