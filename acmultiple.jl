@@ -1,6 +1,7 @@
 include("airfoilread.jl")  # my airfoil file reader
 push!(LOAD_PATH, "minpack")
-using Root
+using Root  # mywrapper to minpack
+using HDF5
 
 
 # --- Influence Coefficients ---
@@ -74,6 +75,7 @@ function WxIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Fl
 
     for i in eachindex(xvec)
         if yvec[i] >= -1.0 && yvec[i] <= 1.0 && xvec[i] >= 0.0 && xvec[i]^2 + yvec[i]^2 >= 1.0
+        # if yvec[i] >= -1.0 && yvec[i] <= 1.0 && (xvec[i] >= 0.0 || (xvec[i] >= -1 && xvec[i]^2 + yvec[i]^2 <= 1.0))
             thetak = acos(yvec[i])
             k = findfirst(thetavec + dtheta/2 .> thetak)  # index of intersection
             Wx[i, k] = -1.0
@@ -115,6 +117,28 @@ function WxII(thetavec::Array{Float64,1})
     return Wx
 end
 
+function precomputeMatrices(ntheta)
+
+    # precompute self influence matrices
+
+    # setup discretization (all the same, and uniformly spaced in theta)
+    dtheta = 2*pi/ntheta
+    theta = collect(dtheta/2:dtheta:2*pi)
+
+    Dxself = DxII(theta)
+    Wxself = WxII(theta)
+    Ayself = AyIJ(-sin(theta), cos(theta), theta)
+
+    # write to file
+    h5open("theta-$ntheta.h5", "w") do file
+        write(file, "theta", theta)
+        write(file, "Dx", Dxself)
+        write(file, "Wx", Wxself)
+        write(file, "Ay", Ayself)
+    end
+
+end
+
 
 function matrixAssemble(centerX::Array{Float64,1}, centerY::Array{Float64,1}, radii::Array{Float64,1}, ntheta::Int64)
     """
@@ -122,20 +146,21 @@ function matrixAssemble(centerX::Array{Float64,1}, centerY::Array{Float64,1}, ra
     radii: corresponding array of their radii
     """
 
-    # setup discretization (all the same, and uniformly spaced in theta)
-    dtheta = 2*pi/ntheta
-    theta = collect(dtheta/2:dtheta:2*pi)
+    file = "theta-$ntheta.h5"
+    if !isfile(file)
+        precomputeMatrices(ntheta)
+    end
 
-    # initialize matrices
+    theta = h5read(file, "theta")
+    Dxself = h5read(file, "Dx")
+    Wxself = h5read(file, "Wx")
+    Ayself = h5read(file, "Ay")
+
+    # initialize global matrices
     nturbines = length(radii)
     Dx = zeros(nturbines*ntheta, nturbines*ntheta)
     Wx = zeros(nturbines*ntheta, nturbines*ntheta)
     Ay = zeros(nturbines*ntheta, nturbines*ntheta)
-
-    # precompute self induced entries
-    Dxself = DxII(theta)
-    Wxself = WxII(theta)
-    Ayself = AyIJ(-sin(theta), cos(theta), theta)
 
     # iterate through turbines
     for I in eachindex(radii)
@@ -207,25 +232,22 @@ type Turbine
     delta::Float64
     B::Int64
     af::AirfoilData
-    ccwrotation::Bool
+    Omega::Float64
     centerX::Float64
     centerY::Float64
 end
 
 type Environment
     Vinf::Float64
-    Omega::Float64
     rho::Float64
     mu::Float64
 end
 
-# r::Float64, chord::Float64, twist::Float64, delta::Float64, B::Int64, af::AirfoilData,
 
 function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::Array{Float64,1},
     turbine::Turbine, env::Environment)
     # u, v, theta - arrays of size ntheta
     # r, chord, twist, Vinf, Omega, rho, mu - scalars
-    # rotation = 1.0 for ccw or -1 for cw
 
     # unpack
     r = turbine.r
@@ -233,18 +255,17 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     twist = turbine.twist
     delta = turbine.delta
     B = turbine.B
+    Omega = turbine.Omega
 
     Vinf = env.Vinf
-    Omega = env.Omega
     rho = env.rho
 
-
     # set the rotation direction
-    rotation = turbine.ccwrotation ? 1.0 : -1.0
+    rotation = sign(Omega)
 
     # velocity components and angles
     Vn = Vinf*(1.0 + uvec).*sin(thetavec) - Vinf*vvec.*cos(thetavec)
-    Vt = rotation*(Vinf*(1.0 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec)) + Omega*r
+    Vt = rotation*(Vinf*(1.0 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec)) + abs(Omega)*r
     W = sqrt(Vn.^2 + Vt.^2)
     phi = atan2(Vn, Vt)
     alpha = phi - twist
@@ -284,17 +305,14 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
         ka = 1.0 / (1-a)
     end
 
-    p = ka*q
-
     # power coefficient
     H = 1.0  # per unit height
     Sref = 2*r*H
     Q = r*Tp
-    # println(Q)
-    P = Omega*B/(2*pi)*pInt(thetavec, Q)
+    P = abs(Omega)*B/(2*pi)*pInt(thetavec, Q)
     CP = P / (0.5*rho*Vinf^3 * Sref)
 
-    return p, CT, CP, Rp, Tp, Zp, Q
+    return q, ka, CT, CP, Rp, Tp, Zp
 end
 
 # -----------------------------------------
@@ -304,41 +322,87 @@ end
 # ------ Solve System --------------
 
 function residual(w::Array{Float64,1}, A::Array{Float64,2}, theta::Array{Float64,1},
-    turbines::Array{Turbine,1}, env::Environment)
+    k::Array{Float64,1}, turbines::Array{Turbine,1}, env::Environment)
 
     # setup
     ntheta = length(theta)
     nturbines = length(turbines)  #  int(length(w)/2/ntheta)
-    p = zeros(ntheta*nturbines)
+    q = zeros(ntheta*nturbines)
+    ka = 0.0
 
     for i in eachindex(turbines)
         idx = (i-1)*ntheta+1:i*ntheta
 
         u = w[idx]
         v = w[ntheta*nturbines + idx]
-        p[idx], _, _, _, _, _ = radialforce(u, v, theta, turbines[i], env)
+
+        q[idx], ka, _, _, _, _, _ = radialforce(u, v, theta, turbines[i], env)
     end
 
-    return A*p - w
+    if nturbines == 1  # if only one turbine use the k from the analysis
+        k = [ka]
+    end  # otherwise, use k that was input to this function
+
+    # reformat to multiply in correct locations
+    kmult = repeat(k, inner=[ntheta])
+    kmult = [kmult; kmult]
+
+    return (A*q).*kmult - w
 end
 
 
 function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::Int64)
 
-    # assemble global matrices
+    # list comprehensions
     centerX = [turbine.centerX for turbine in turbines]
     centerY = [turbine.centerY for turbine in turbines]
     radii = [turbine.r for turbine in turbines]
 
+    # assemble global matrices
     Ax, Ay, theta = matrixAssemble(centerX, centerY, radii, ntheta)
-    A = [Ax; Ay]
 
-    # ND root solve
+    # setup
     ntheta = length(theta)
     nturbines = length(turbines)
-    w0 = zeros(nturbines*ntheta*2)
-    args = (A, theta, turbines, env)
     tol = 1e-6
+    CT = zeros(nturbines)
+    CP = zeros(nturbines)
+    Rp = zeros(ntheta, nturbines)
+    Tp = zeros(ntheta, nturbines)
+    Zp = zeros(ntheta, nturbines)
+
+    q = zeros(ntheta)
+
+    # compute nonlinear correction factors (each turbine individaully)
+    k = zeros(nturbines)
+
+    for i in eachindex(turbines)
+        w0 = zeros(ntheta*2)
+
+        idx = (i-1)*ntheta+1:i*ntheta
+        args = ([Ax[idx, idx]; Ay[idx, idx]], theta, [1.0], [turbines[i]], env)
+
+        w, zz, info = hybrd(residual, w0, args, tol)
+
+        if info != 1
+            println("hybrd terminated prematurely. info = ", info)
+        end
+
+        idx = 1:ntheta
+        u = w[idx]
+        v = w[ntheta + idx]
+        q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+
+    end
+
+
+    if nturbines == 1
+        return CT, CP, Rp, Tp, Zp, theta
+    end
+
+    # Solve coupled system
+    w0 = zeros(nturbines*ntheta*2)
+    args = ([Ax; Ay], theta, k, turbines, env)
 
     w, zz, info = hybrd(residual, w0, args, tol)
 
@@ -346,24 +410,16 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
         println("hybrd terminated prematurely. info = ", info)
     end
 
-    # evaluate loads at solution point
-    CT = zeros(nturbines)
-    CP = zeros(nturbines)
-    Rp = zeros(ntheta, nturbines)
-    Tp = zeros(ntheta, nturbines)
-    Zp = zeros(ntheta, nturbines)
-    Q = zeros(ntheta, nturbines)
-
     for i in eachindex(turbines)
         idx = (i-1)*ntheta+1:i*ntheta
 
         u = w[idx]
         v = w[ntheta*nturbines + idx]
-        _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i], Q[:, i] = radialforce(u, v, theta, turbines[i], env)
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
 
     end
 
-    return CT, CP, Rp, Tp, Zp, Q, theta
+    return CT, CP, Rp, Tp, Zp, theta
 end
 
 # -----------------------------------------
@@ -392,8 +448,11 @@ function pInt(theta::Array{Float64,1}, f::Array{Float64,1})
     return integral
 end
 
-# # define fixed conditions geometry
-#
+# define fixed conditions geometry
+
+# ntheta = 36
+# precomputeMatrices(ntheta)
+
 # ntheta = 36
 #
 # r = 3.0
@@ -407,18 +466,72 @@ end
 # Vinf = 1.0
 # rho = 1.225
 # mu = 1.7894e-5
-#
-# ccw1 = true
-#
-# turbines = Array{Turbine}(1)
-# turbines[1] = Turbine(r, chord, twist, delta, B, af, ccw1, 0.0, 0.0)
-# #
 # tsr = 3.5
 # Omega = Vinf*tsr/r
-# env = Environment(Vinf, Omega, rho, mu)
 #
-# CT, CP, Rp, Tp, Zp = actuatorcylinder(turbines, env, ntheta)
-# println(CT, CP)
+# # ccw1 = true
+#
+# turbines = Array{Turbine}(2)
+# turbines[1] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0)
+# turbines[2] = Turbine(r, chord, twist, delta, B, af, -Omega, 0.0, 2*r)
+#
+# env = Environment(Vinf, rho, mu)
+#
+# using PyPlot
+# close("all")
+#
+# CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta)
+# println(CP)
+#
+#
+#
+#
+# # # println(CT)
+# # # println(CP/0.47318637495058935 -1)
+# #
+# figure(1)
+# plot(theta, r*Tp)
+#
+# figure(2)
+# plot(theta, -Rp)
+#
+#
+# turbines[1] = Turbine(r, chord, twist, delta, B, af, -Omega, 0.0, 0.0)
+# CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta)
+#
+# figure(1)
+# plot(theta, r*Tp)
+#
+# figure(2)
+# plot(theta, -Rp)
+#
+# turbines = Array{Turbine}(2)
+# turbines[1] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0)
+# turbines[2] = Turbine(r, chord, twist, delta, B, af, -Omega, 0.0, -2*r)
+# CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta)
+#
+# figure(1)
+# plot(theta, r*Tp)
+#
+# figure(2)
+# plot(theta, -Rp)
+
+
+
+
+
+
+# ntheta = 6
+# dtheta = 2*pi/ntheta
+# theta2 = collect(dtheta/2:dtheta:2*pi)
+#
+# x = collect(linspace(-1.25, 1.25, 4))
+# y = 1.25*ones(4)
+# Dxsub = DxIJ(x, y, theta2)
+# # println(Dxsub)
+# Dxsub = DxII(theta2)
+# nothing
+
 # #
 #
 # function mytest(n)
