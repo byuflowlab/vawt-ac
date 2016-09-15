@@ -231,7 +231,7 @@ type Turbine
     twist::Float64
     delta::Float64
     B::Int64
-    af::AirfoilData
+    af
     Omega::Float64
     centerX::Float64
     centerY::Float64
@@ -272,8 +272,9 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     # Re = rho*W*chord/mu  # currently no Re dependence
 
     # airfoil
-    cl = turbine.af.cl[alpha]
-    cd = turbine.af.cd[alpha]
+    # cl = turbine.af.cl[alpha]
+    # cd = turbine.af.cd[alpha]
+    cl, cd = turbine.af(alpha)
 
     # rotate force coefficients
     cn = cl.*cos(phi) + cd.*sin(phi)
