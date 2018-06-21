@@ -1,5 +1,11 @@
+module vawtac
+using QuadGK
+export actuatorcylinder,readaerodyn
+path,_ = splitdir(@__FILE__)
+LP="$path/../data/"
 include("airfoilread.jl")  # my airfoil file reader
-push!(LOAD_PATH, "minpack")
+#Add file locations to path
+push!(LOAD_PATH, LP*"minpack")
 using Root  # mywrapper to minpack
 using HDF5
 
@@ -26,7 +32,6 @@ function panelIntegration(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetav
             # an Adaptive Gauss-Kronrod quadrature integration.  Tried trapz but this was faster.
             A[i, j], error = quadgk(integrand, thetavec[j]-dtheta/2.0, thetavec[j]+dtheta/2.0, abstol=1e-10)
         end
-
     end
 
     return A
@@ -127,7 +132,7 @@ function precomputeMatrices(ntheta)
 
     Dxself = DxII(theta)
     Wxself = WxII(theta)
-    Ayself = AyIJ(-sin(theta), cos(theta), theta)
+    Ayself = AyIJ(-sin.(theta), cos.(theta), theta)
 
     # write to file
     h5open("theta-$ntheta.h5", "w") do file
@@ -167,8 +172,8 @@ function matrixAssemble(centerX::Array{Float64,1}, centerY::Array{Float64,1}, ra
         for J in eachindex(radii)
 
             # find normalized i locations relative to center of turbine J
-            x = (centerX[I]-radii[I]*sin(theta) - centerX[J])/radii[J]
-            y = (centerY[I]+radii[I]*cos(theta) - centerY[J])/radii[J]
+            x = (centerX[I]-radii[I]*sin.(theta) - centerX[J])/radii[J]
+            y = (centerY[I]+radii[I]*cos.(theta) - centerY[J])/radii[J]
 
             # self-influence is precomputed
             if I == J
@@ -264,10 +269,10 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     rotation = sign(Omega)
 
     # velocity components and angles
-    Vn = Vinf*(1.0 + uvec).*sin(thetavec) - Vinf*vvec.*cos(thetavec)
-    Vt = rotation*(Vinf*(1.0 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec)) + abs(Omega)*r
-    W = sqrt(Vn.^2 + Vt.^2)
-    phi = atan2(Vn, Vt)
+    Vn = Vinf*(1.0 + uvec).*sin.(thetavec) - Vinf*vvec.*cos.(thetavec)
+    Vt = rotation*(Vinf*(1.0 + uvec).*cos.(thetavec) + Vinf*vvec.*sin.(thetavec)) + abs(Omega)*r
+    W = sqrt.(Vn.^2 + Vt.^2)
+    phi = atan2.(Vn, Vt)
     alpha = phi - twist
     # Re = rho*W*chord/mu  # currently no Re dependence
 
@@ -277,8 +282,8 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     cl, cd = turbine.af(alpha)
 
     # rotate force coefficients
-    cn = cl.*cos(phi) + cd.*sin(phi)
-    ct = cl.*sin(phi) - cd.*cos(phi)
+    cn = cl.*cos.(phi) + cd.*sin.(phi)
+    ct = cl.*sin.(phi) - cd.*cos.(phi)
 
     # radial force
     sigma = B*chord/r
@@ -291,7 +296,7 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     Zp = -cn.*qdyn*chord*tan(delta)
 
     # nonlinear correction factor
-    integrand = (W/Vinf).^2 .* (cn.*sin(thetavec) - rotation*ct.*cos(thetavec)/cos(delta))
+    integrand = (W/Vinf).^2 .* (cn.*sin.(thetavec) - rotation*ct.*cos.(thetavec)/cos(delta))
     CT = sigma/(4*pi) * pInt(thetavec, integrand)
     if CT > 2.0
         a = 0.5*(1.0 + sqrt(1.0 + CT))
@@ -382,7 +387,6 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
 
         idx = (i-1)*ntheta+1:i*ntheta
         args = ([Ax[idx, idx]; Ay[idx, idx]], theta, [1.0], [turbines[i]], env)
-
         w, zz, info = hybrd(residual, w0, args, tol)
 
         if info != 1
@@ -448,3 +452,5 @@ function pInt(theta::Array{Float64,1}, f::Array{Float64,1})
 
     return integral
 end
+
+end #module
