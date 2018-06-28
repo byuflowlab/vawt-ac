@@ -1,4 +1,3 @@
-using PyPlot
 using vawtac
 close("all")
 path,_ = splitdir(@__FILE__)
