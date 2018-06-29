@@ -1,6 +1,6 @@
 module Root
 export hybrd
-path,_ = splitdir(@__FILE__)
+LP,_ = splitdir(@__FILE__)
 # function residual_wrapper(nw::Ref{Cint}, xw::Ref{Cdouble}, fw::Ref{Cdouble}, iflag::Ref{Cint})
 function residual_wrapper(nw::Int32, xw::Ptr{Cdouble}, fw::Ptr{Cdouble}, iflag::Int32)
     """
