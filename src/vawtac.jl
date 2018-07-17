@@ -30,7 +30,7 @@ function panelIntegration(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetav
 
         for j in eachindex(thetavec)
             # an Adaptive Gauss-Kronrod quadrature integration.  Tried trapz but this was faster.
-            A[i, j], error = quadgk(integrand, thetavec[j]-dtheta/2.0, thetavec[j]+dtheta/2.0, abstol=1e-10)
+            A[i, j], error = quadgk(integrand, thetavec[j]-dtheta/2.0, thetavec[j]+dtheta/2.0, atol=1e-10)
         end
     end
 
