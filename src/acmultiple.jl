@@ -1,7 +1,6 @@
-include("airfoilread.jl")  # my airfoil file reader
-push!(LOAD_PATH, "minpack")
-using Root  # mywrapper to minpack
-using HDF5
+import NLsolve
+import HDF5
+import QuadGK
 
 
 # --- Influence Coefficients ---
@@ -10,7 +9,7 @@ using HDF5
 applies for both Ay and Rx depending on which function ifunc(x, y, phi)
 is passed in
 """
-function panelIntegration(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Float64,1}, ifunc)
+function panelIntegration(xvec, yvec, thetavec, ifunc)
 
     # initialize
     nx = length(xvec)
@@ -24,7 +23,7 @@ function panelIntegration(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetav
 
         for j in eachindex(thetavec)
             # an Adaptive Gauss-Kronrod quadrature integration.  Tried trapz but this was faster.
-            A[i, j], error = quadgk(integrand, thetavec[j]-dtheta/2.0, thetavec[j]+dtheta/2.0, abstol=1e-10)
+            A[i, j], error = QuadGK.quadgk(integrand, thetavec[j]-dtheta/2.0, thetavec[j]+dtheta/2.0, atol=1e-10)
         end
 
     end
@@ -36,7 +35,7 @@ end
 """
 integrand used for computing Dx
 """
-function Dxintegrand(x::Float64, y::Float64, phi::Float64)
+function Dxintegrand(x, y, phi)
     v1 = x + sin(phi)
     v2 = y - cos(phi)
     # v1 and v2 should never both be zero b.c. we never integrate self.  RxII handles that case.
@@ -47,7 +46,7 @@ end
 """
 integrand used for computing Ay
 """
-function Ayintegrand(x::Float64, y::Float64, phi::Float64)
+function Ayintegrand(x, y, phi)
     v1 = x + sin(phi)
     v2 = y - cos(phi)
     if abs(v1) < 1e-12 && abs(v2) < 1e-12  # occurs when integrating self, function symmetric around singularity, should integrate to zero
@@ -57,15 +56,15 @@ function Ayintegrand(x::Float64, y::Float64, phi::Float64)
 end
 
 
-function AyIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Float64,1})
+function AyIJ(xvec, yvec, thetavec)
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
 end
 
-function DxIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Float64,1})
+function DxIJ(xvec, yvec, thetavec)
     return panelIntegration(xvec, yvec, thetavec, Dxintegrand)
 end
 
-function WxIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Float64,1})
+function WxIJ(xvec, yvec, thetavec)
 
     # initialize
     nx = length(xvec)
@@ -86,7 +85,7 @@ function WxIJ(xvec::Array{Float64,1}, yvec::Array{Float64,1}, thetavec::Array{Fl
     return Wx
 end
 
-function DxII(thetavec::Array{Float64,1})
+function DxII(thetavec)
 
     # initialize
     ntheta = length(thetavec)
@@ -104,7 +103,7 @@ function DxII(thetavec::Array{Float64,1})
     return Rx
 end
 
-function WxII(thetavec::Array{Float64,1})
+function WxII(thetavec)
 
     # initialize
     ntheta = length(thetavec)
@@ -127,34 +126,34 @@ function precomputeMatrices(ntheta)
 
     Dxself = DxII(theta)
     Wxself = WxII(theta)
-    Ayself = AyIJ(-sin(theta), cos(theta), theta)
+    Ayself = AyIJ(-sin.(theta), cos.(theta), theta)
 
     # write to file
-    h5open("theta-$ntheta.h5", "w") do file
-        write(file, "theta", theta)
-        write(file, "Dx", Dxself)
-        write(file, "Wx", Wxself)
-        write(file, "Ay", Ayself)
+    HDF5.h5open("$modulepath/theta-$ntheta.h5", "w") do file
+        HDF5.write(file, "theta", theta)
+        HDF5.write(file, "Dx", Dxself)
+        HDF5.write(file, "Wx", Wxself)
+        HDF5.write(file, "Ay", Ayself)
     end
 
 end
 
 
-function matrixAssemble(centerX::Array{Float64,1}, centerY::Array{Float64,1}, radii::Array{Float64,1}, ntheta::Int64)
+function matrixAssemble(centerX, centerY, radii, ntheta)
     """
     centerX, centerY: array of x,y coordinates for centers of the VAWTs in the farm
     radii: corresponding array of their radii
     """
 
-    file = "theta-$ntheta.h5"
+    file = "$modulepath/theta-$ntheta.h5"
     if !isfile(file)
         precomputeMatrices(ntheta)
     end
 
-    theta = h5read(file, "theta")
-    Dxself = h5read(file, "Dx")
-    Wxself = h5read(file, "Wx")
-    Ayself = h5read(file, "Ay")
+    theta = HDF5.h5read(file, "theta")
+    Dxself = HDF5.h5read(file, "Dx")
+    Wxself = HDF5.h5read(file, "Wx")
+    Ayself = HDF5.h5read(file, "Ay")
 
     # initialize global matrices
     nturbines = length(radii)
@@ -167,8 +166,8 @@ function matrixAssemble(centerX::Array{Float64,1}, centerY::Array{Float64,1}, ra
         for J in eachindex(radii)
 
             # find normalized i locations relative to center of turbine J
-            x = (centerX[I]-radii[I]*sin(theta) - centerX[J])/radii[J]
-            y = (centerY[I]+radii[I]*cos(theta) - centerY[J])/radii[J]
+            x = (centerX[I].-radii[I]*sin.(theta) .- centerX[J])/radii[J]
+            y = (centerY[I].+radii[I]*cos.(theta) .- centerY[J])/radii[J]
 
             # self-influence is precomputed
             if I == J
@@ -225,27 +224,26 @@ end
 
 # ------- Force Coefficients ---------
 
-type Turbine
-    r::Float64
-    chord::Float64
-    twist::Float64
-    delta::Float64
-    B::Int64
-    af
-    Omega::Float64
-    centerX::Float64
-    centerY::Float64
+mutable struct Turbine{TF,TI,TFN}
+    r::TF
+    chord::TF
+    twist::TF
+    delta::TF
+    B::TI
+    af::TFN
+    Omega::TF
+    centerX::TF
+    centerY::TF
 end
 
-type Environment
-    Vinf::Float64
-    rho::Float64
-    mu::Float64
+mutable struct Environment{TF}
+    Vinf::TF
+    rho::TF
+    mu::TF
 end
 
-
-function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::Array{Float64,1},
-    turbine::Turbine, env::Environment)
+function radialforce(uvec, vvec, thetavec,
+    turbine::Turbine, env)
     # u, v, theta - arrays of size ntheta
     # r, chord, twist, Vinf, Omega, rho, mu - scalars
 
@@ -264,11 +262,11 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     rotation = sign(Omega)
 
     # velocity components and angles
-    Vn = Vinf*(1.0 + uvec).*sin(thetavec) - Vinf*vvec.*cos(thetavec)
-    Vt = rotation*(Vinf*(1.0 + uvec).*cos(thetavec) + Vinf*vvec.*sin(thetavec)) + abs(Omega)*r
-    W = sqrt(Vn.^2 + Vt.^2)
-    phi = atan2(Vn, Vt)
-    alpha = phi - twist
+    Vn = Vinf*(1.0 .+ uvec).*sin.(thetavec) .- Vinf*vvec.*cos.(thetavec)
+    Vt = rotation*(Vinf*(1.0 .+ uvec).*cos.(thetavec) .+ Vinf*vvec.*sin.(thetavec)) .+ abs(Omega)*r
+    W = sqrt.(Vn.^2 .+ Vt.^2)
+    phi = atan.(Vn, Vt)
+    alpha = phi .- twist
     # Re = rho*W*chord/mu  # currently no Re dependence
 
     # airfoil
@@ -277,8 +275,8 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     cl, cd = turbine.af(alpha)
 
     # rotate force coefficients
-    cn = cl.*cos(phi) + cd.*sin(phi)
-    ct = cl.*sin(phi) - cd.*cos(phi)
+    cn = cl.*cos.(phi) .+ cd.*sin.(phi)
+    ct = cl.*sin.(phi) .- cd.*cos.(phi)
 
     # radial force
     sigma = B*chord/r
@@ -291,7 +289,7 @@ function radialforce(uvec::Array{Float64,1}, vvec::Array{Float64,1}, thetavec::A
     Zp = -cn.*qdyn*chord*tan(delta)
 
     # nonlinear correction factor
-    integrand = (W/Vinf).^2 .* (cn.*sin(thetavec) - rotation*ct.*cos(thetavec)/cos(delta))
+    integrand = (W/Vinf).^2 .* (cn.*sin.(thetavec) .- rotation*ct.*cos.(thetavec)/cos(delta))
     CT = sigma/(4*pi) * pInt(thetavec, integrand)
     if CT > 2.0
         a = 0.5*(1.0 + sqrt(1.0 + CT))
@@ -322,20 +320,20 @@ end
 
 # ------ Solve System --------------
 
-function residual(w::Array{Float64,1}, A::Array{Float64,2}, theta::Array{Float64,1},
-    k::Array{Float64,1}, turbines::Array{Turbine,1}, env::Environment)
+function residual(w, A, theta,
+    k, turbines, env)
 
     # setup
     ntheta = length(theta)
-    nturbines = length(turbines)  #  int(length(w)/2/ntheta)
+    nturbines = Int(length(w)/2/ntheta)
     q = zeros(ntheta*nturbines)
     ka = 0.0
 
-    for i in eachindex(turbines)
-        idx = (i-1)*ntheta+1:i*ntheta
+    for i = 1:nturbines
+        idx = collect((i-1)*ntheta+1:i*ntheta)
 
         u = w[idx]
-        v = w[ntheta*nturbines + idx]
+        v = w[ntheta*nturbines .+ idx]
 
         q[idx], ka, _, _, _, _, _ = radialforce(u, v, theta, turbines[i], env)
     end
@@ -352,7 +350,7 @@ function residual(w::Array{Float64,1}, A::Array{Float64,2}, theta::Array{Float64
 end
 
 
-function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::Int64)
+function actuatorcylinder(turbines, env, ntheta)
 
     # list comprehensions
     centerX = [turbine.centerX for turbine in turbines]
@@ -377,21 +375,21 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
     # compute nonlinear correction factors (each turbine individaully)
     k = zeros(nturbines)
 
-    for i in eachindex(turbines)
+    for i = 1:nturbines
         w0 = zeros(ntheta*2)
 
-        idx = (i-1)*ntheta+1:i*ntheta
-        args = ([Ax[idx, idx]; Ay[idx, idx]], theta, [1.0], [turbines[i]], env)
+        idx = collect((i-1)*ntheta+1:i*ntheta)
 
-        w, zz, info = hybrd(residual, w0, args, tol)
-
-        if info != 1
-            println("hybrd terminated prematurely. info = ", info)
+        resid_single(x) = residual(x,[Ax[idx, idx]; Ay[idx, idx]], theta, [1.0], turbines, env)
+        result = NLsolve.nlsolve(resid_single, w0, ftol=tol)
+        w = result.zero
+        if !NLsolve.converged(result)
+            println("NLsolve terminated prematurely. info = ", info)
         end
 
-        idx = 1:ntheta
+        idx = collect(1:ntheta)
         u = w[idx]
-        v = w[ntheta + idx]
+        v = w[ntheta .+ idx]
         q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
 
     end
@@ -403,19 +401,19 @@ function actuatorcylinder(turbines::Array{Turbine,1}, env::Environment, ntheta::
 
     # Solve coupled system
     w0 = zeros(nturbines*ntheta*2)
-    args = ([Ax; Ay], theta, k, turbines, env)
 
-    w, zz, info = hybrd(residual, w0, args, tol)
-
-    if info != 1
-        println("hybrd terminated prematurely. info = ", info)
+    resid_multiple(x) = residual(x,[Ax; Ay], theta, k, turbines, env)
+    result = NLsolve.nlsolve(resid_multiple, w0, ftol=tol)
+    w = result.zero
+    if !NLsolve.converged(result)
+        println("NLsolve terminated prematurely. info = ", info)
     end
 
-    for i in eachindex(turbines)
-        idx = (i-1)*ntheta+1:i*ntheta
+    for i = 1:nturbines
+        idx = collect((i-1)*ntheta+1:i*ntheta)
 
         u = w[idx]
-        v = w[ntheta*nturbines + idx]
+        v = w[ntheta*nturbines .+ idx]
         _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
 
     end
@@ -428,7 +426,7 @@ end
 # ---------- helper methods --------------
 
 # trapezoidal integration
-function trapz(x::Array{Float64,1}, y::Array{Float64,1})  # integrate y w.r.t. x
+function trapz(x, y)  # integrate y w.r.t. x
 
     integral = 0.0
     for i = 1:length(x)-1
@@ -438,7 +436,7 @@ function trapz(x::Array{Float64,1}, y::Array{Float64,1})  # integrate y w.r.t. x
 end
 
 # integration for a periodic function where end points don't reach ends (uses trapezoidal method)
-function pInt(theta::Array{Float64,1}, f::Array{Float64,1})
+function pInt(theta, f)
 
     integral = trapz(theta, f)
 

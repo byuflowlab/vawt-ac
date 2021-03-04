@@ -1,5 +1,8 @@
 module VAWTAC
 
-# Write your package code here.
+const modulepath = splitdir(@__FILE__)[1]
+
+include("$modulepath/acmultiple.jl")
+include("$modulepath/airfoilread.jl")
 
 end
