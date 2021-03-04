@@ -1,3 +1,4 @@
+/Manifest.toml
 *.py[cod]
 
 # OpenMDAO
@@ -119,3 +120,4 @@ Thumbs.db
 *.dylib
 *.mem
 *.ipynb_checkpoints
+*.h5

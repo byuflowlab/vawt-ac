@@ -1,0 +1,13 @@
+name = "VAWTAC"
+uuid = "f7ea5375-9ce4-4034-8db9-e39f0a75e296"
+authors = ["Kevin R. Moore <kevmoor@sandia.gov> and contributors"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
