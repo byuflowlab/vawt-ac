@@ -1,0 +1,19 @@
+name = "VAWTAC"
+uuid = "f7ea5375-9ce4-4034-8db9-e39f0a75e296"
+authors = ["Kevin R. Moore <kevmoor@sandia.gov> and contributors"]
+version = "0.1.0"
+
+[deps]
+Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
+QuadGK = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

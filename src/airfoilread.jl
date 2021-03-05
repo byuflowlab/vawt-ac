@@ -1,5 +1,3 @@
-# module AirfoilRead
-
 # export AirfoilData, readaerodyn
 
 # import Interpolations: interpolate, Gridded, Linear, GriddedInterpolation
@@ -33,13 +31,13 @@ function readaerodyn(filename)
         # read until EOT
         while true
             line = readline(f)
-            if contains(line, "EOT")
+            if occursin(line, "EOT")
                 break
             end
             parts = split(line)
-            push!(alpha, float(parts[1]))
-            push!(cl, float(parts[2]))
-            push!(cd, float(parts[3]))
+            push!(alpha, parse(Float64,parts[1]))
+            push!(cl, parse(Float64,parts[2]))
+            push!(cd, parse(Float64,parts[3]))
         end
     end
 
@@ -68,7 +66,7 @@ end
 
 # filename = "airfoils/naca0015-wt.dat"
 # af, a0, cl0, cd0 = readaerodyn(filename)
-# alpha = linspace(-pi, pi, 2000)
+# alpha = LinRange(-pi, pi, 2000)
 # cl, cd = af(alpha)
 # using PyPlot
 # figure()
